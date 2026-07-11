@@ -1,0 +1,17 @@
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# model weights / caches — never commit
+*.safetensors
+*.gguf
+*.bin
+
+# large raw results: >10MB CSV 给采样版，完整数据本地留存
+experiments/**/results/*.raw.*
+experiments/**/results/large/
+
+# scratch
+*.log
+.tmp/
