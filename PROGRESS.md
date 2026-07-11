@@ -1,9 +1,10 @@
 # PROGRESS
 
 ## 当前状态
-- Day: 0 / 阶段: Phase 0（环境 + harness + 项目一仓库公开）
-- 上次收尾: 无（今天起手）
-- 阻塞项: 无
+- Day: 0 完成 → 下次 Day 1 / 阶段: Phase 0（环境 + harness + 项目一仓库公开）
+- 上次收尾: Day 0 技术清单全部完成；GitHub 仓库 https://github.com/DawnCalm/vllm-scheduling-lab 已建
+- 阻塞项: ① 用户需执行 `git push --force origin main`（commit 邮箱重写为 827790610@qq.com 后待推）；② Day 0 防守演练 10 题已出（见 question-bank.md），用户尚未作答——**Day 1 开场先做这个**
+- Day 1 计划: harness 定型（workload 生成器形状由用户先给设计！+ 指标采集 + 绘图，DoD: 一条命令 → CSV+图）；项目一仓库公开
 - **Pin 版本: vLLM v0.24.0（docker `vllm/vllm-openai:v0.24.0`，2026-06-29 发布，2026-07-11 起手日选定）——全程不升级**
 
 ## 环境事实（2026-07-11 实测）
