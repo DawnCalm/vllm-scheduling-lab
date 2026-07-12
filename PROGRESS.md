@@ -1,15 +1,17 @@
 # PROGRESS
 
 ## ▶ 下次 SESSION 开场清单（Claude 读到这里就按①②③顺序执行，做完一项划掉一项）
-1. **还 Q1**：让用户口述"为什么 pin v0.24.0 而非 v0.25.0、代价是什么"（见 question-bank.md 第1题，上次漏答）。用户答→压缩纠偏，不代答。
-2. **[weak] 抽查**：从 question-bank.md 标 [weak] 的题里抽 2–3 道让用户复述（重点 Q6/Q8/Q10 那条 prefill算KV vs decode复用KV 的边界线）。答好了去掉 [weak]，还虚就留着。
-3. **进 Day 1 harness**：先让用户口述 workload 形状设计（长短混合比例/长度分布/模拟什么场景——这是"实验设计"归用户主导，Claude 不越俎代庖），用户给了设计再动手写脚手架。DoD：一条命令 → CSV+图。
-（注：`git push --force origin main` 若上次没推成，提醒用户补推。）
+1. **确认 GPU 是否已释放**：`nvidia-smi` 看 GPU 0 是否还被 dzkduser 的 evorubrics 占（Day 1 时两卡各 ~80GB，只剩 ~17GB，跑不了 8B）。没释放→回到"等/协调"或先做无 GPU 的活（架构图、项目一公开）。
+2. **GPU 一到手，先冒烟验证 harness**（Day 1 写完但**一行没在真服务上跑过**）：`harness/run.sh /tmp/demo --n-long 2 --n-short 3 --long-input 4000` 用小 workload 验证 4 个 API 假设：①token-id 列表当 prompt ②`min_tokens`/`ignore_eos` ③streaming 抓 TTFT ④/metrics 字段名对得上。任一不成立就地修。
+3. **冒烟过了再上 A1 首个点**：`harness/run.sh experiments/a1-preemption/results/burst-20x100 --n-long 20 --n-short 100`（20长/100短=114%超线，预期触发抢占）。DoD：一条命令→CSV+图，timeline.png 里 preemptions 曲线抬头。
+4. **[weak] 抽查**（若有空）：question-bank 剩余 [weak]；Q8 尾巴"TTFT 恶化归因到排队"复述一遍。
+（注：`git push` 仍有 3 个 commit 未推——fetch 后 origin/main 停在 c701a2，本地领先 e52ce40/c470aab/ec5d606；用户以为推了其实没推。可能需 `--force`（重写过邮箱）。）
 
 ## 当前状态
-- Day: 0 完成 → 下次 Day 1 / 阶段: Phase 0（环境 + harness + 项目一仓库公开）
-- 上次收尾: Day 0 技术清单全部完成 + 防守演练已批改（见 question-bank.md）；GitHub 仓库 https://github.com/DawnCalm/vllm-scheduling-lab 已建
-- 阻塞项: `git push --force origin main` 待用户执行（commit 邮箱已重写为 827790610@qq.com）
+- Day: 1 进行中（harness 代码完成但**未验证**）/ 阶段: Phase 0
+- 上次收尾: Day 1 写完 harness 全部 4 部件 + run.sh 编排；但 GPU 被占无法起服务验证；Q1 补答+prefill/decode 边界焊死（见 question-bank Day 1 复查）
+- **阻塞项（硬）**: GPU 0/1 各被 dzkduser 的 `evorubrics` 任务占 ~80GB（PID 3230151/3230152），各只剩 ~17GB → 8B(权重16GB)+KV 塞不下。用户选择线下协调 GPU（问 evorubrics 跑多久/能否独占一卡/夜间错峰）。**harness 代码全部未在真服务验证**。
+- 阻塞项（旧）: `git push` 3 个 commit 未推（见上）
 - **Pin 版本: vLLM v0.24.0（docker `vllm/vllm-openai:v0.24.0`，2026-06-29 发布，2026-07-11 起手日选定）——全程不升级**
 
 ## 环境事实（2026-07-11 实测）
@@ -23,6 +25,16 @@
 - 项目一仓库: `~/AI-infra/nano-vllm`（当前 remote 指向上游 GeeeekExplorer/nano-vllm，用户自己的 fork/新仓库待建）
 
 ## 日志（倒序）
+
+### 2026-07-12 (Day 1)
+- 开场：还 Q1（pin 版本，答半对：抓 soak 期，缺"对本项目致命=实验性接口升级即白测"+"代价"整块）；prefill/decode 边界焊死（(a)"KV prefill 算 decode 复用"对了、TTFT 恶化主因纠为**排队**非算力；(b) chunked prefill=限每 step 计算量、术语 prefill HoL blocking）。question-bank 新增"题目分层制度"（行号不背，记机制+war-story）
+- workload 设计（用户主导，已定）：混合服务=简单问答短请求 + 长文档总结/长代码补全；**长 20 条 input 25000/output 512；短 100 条 input 512/output 256；burst 并发**。KV 账：587,040 tokens vs 预算 514,464 = **114% 超线→抢占预期成立**（注：output 从 256→512 曾把总量压到 89%，靠 15→20 长顶回超线）
+- 重要纠偏（源码背书 scheduler.py v0.24.0）：**"被抢占的一定是短请求"错**。FCFS 抢占牺牲者=`running.pop()`=队尾=最晚到达者，长短无关；PRIORITY=最低优先级+最晚到达。短请求"受害"真机制=①新到→恰在队尾被抢②归一化惩罚更狠③排队/HoL。→ SJF 存在理由。源码事实：`num_computed_tokens=0`(recompute非swap)、`waiting.prepend`(塞回队头)、`num_preemptions`每请求自带（trace 直接抓）。KV 预算换算 514,464 = 70.65GiB ÷ 147,456B/token(2·36·8·128·2)
+- 完成：harness 4 部件全写完——`workload.py`(混合生成，token-id精确长度+随机id防prefix cache confound+强制output长度) / `run_load.py`(async客户端,per-req TTFT/TPOT/e2e→CSV) / `metrics_poll.py`(/metrics时间序列) / `plot.py`(timeline+TTFT分层) / `run.sh`(一条命令编排,复用容器)
+- **未完成/阻塞**：GPU 0/1 被 dzkduser evorubrics 各占 80GB → 起不了 8B 服务 → **harness 一行没在真服务验证**（4 个 API 假设待证：token-id prompt/min_tokens/ignore_eos/streaming）。用户选线下协调 GPU
+- 数据：无（未跑）；代码 harness/*.py + run.sh
+- 结论一句话：harness 脚手架就绪但未验证；今日真正卡点是共享 GPU 被占满，暴露"双卡独占"假设已不成立，需线下协调
+- 待办：协调 GPU→冒烟验证 harness→A1 首个点；补推 3 个 commit
 
 ### 2026-07-11 (Day 0)
 - 完成: 环境摸底；pin v0.24.0（当日 v0.25.0 刚发布零 soak，弃）；git init + 骨架；镜像+权重落盘；**Qwen3-8B 单卡冒烟通过**；`vllm bench serve` 跑通；/metrics 抢占计数器实名确认

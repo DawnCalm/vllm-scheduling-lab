@@ -3,10 +3,17 @@
 > 格式：`问题 / 我的答案要点 / 数据支撑(指向实验) / [weak]标记`
 > 每个 Phase 收尾 + 每次防守演练后追加。[weak] 条目下次 session 开场抽查。
 
+## 题目分层制度（2026-07-12 Day 1 确立）
+面试**不会**问"某 socket 在哪一行"。行号的用途只有三个：①深度即保险（答第1层要流畅、能再下探一层）②少数题直接可问 ③war-story 弹药（被钩到才放）。
+- **复习姿势**：记「机制 + 大致在哪个文件/哪一环」，**不背行号**。口述用"抢占触发在 KVCacheManager 块分配路径"，不用"line 420"。
+- **真·高频直接可问（必须不虚）**：Q1、Q5、Q6、Q8、Q10。
+- **机制级（知道机制即可，行号不背）**：Q2、Q3、Q4。
+- **war-story（不主动抽查，被钩到才放）**：Q9（conda/flashinfer-jit-cache）、Q3 的 VLLM_ATTENTION_BACKEND 静默失效。
+
 ## Day 0 防守演练（2026-07-11 出题 + 当日作答批改）
 
-1. [weak-未答] 为什么 pin v0.24.0 而非当天最新 v0.25.0？代价是什么？
-   → 用户漏答。Day 1 开场补。要点：soak 期 / 实验性接口(--scheduler-cls、offloading)中途升级=白测 / 可复现性 vs 新特性。
+1. [ok-半] 为什么 pin v0.24.0 而非当天最新 v0.25.0？代价是什么？
+   → Day 1 补答：抓对 soak 期。缺两块——(1) 对**本项目**尤其致命：--scheduler-cls + offloading 是实验性接口，中途升级=前面测的全作废/不可复现（这才是"为什么是我"）；(2) **代价**没答（题目明确问了）：放弃 v0.25 新特性/bugfix、万一 v0.24 自身有坑也扛着、面试官反问"怎么知道不是已知 bug"→ 用"发布满 N 周 soak + 通读 release note"对冲。一句话防守版见 Day 1 批改。
 
 2. [ok-优秀] 请求生命周期。用户答：ROUTER/DEALER 收请求、PUSH/PULL 回结果——**源码核对四个套接字全对**（core_client.py:521/556 ROUTER, engine/core.py:1090/1503 DEALER, :1608 PUSH, core_client.py:526/561 PULL）。补洞：漏了 Processor/OutputProcessor（在 API server 进程，非 EngineCore）；返回是**每 step** 产出 EngineCoreOutputs，不是每请求。
 
@@ -27,6 +34,11 @@
 10. [weak-过度自信] FP8 KV。用户说"很简单，三后端都受影响"。容量对（减半→~103万 token）。但**源码打脸**：FLASH_ATTN（SM120 默认）supported_kv_cache_dtypes=[auto,float16,bfloat16] **无 fp8**；FlashInfer 有 fp8/e4m3/e5m2/nvfp4；Triton 声明 fp8 但按算力 runtime 门控(triton_attn.py:471)。→ 开 FP8 会踢掉默认 backend 逼自动选择换 FlashInfer。串起 Q3/Q4。
 
 **Day 0 总评**：概念地基扎实（ZMQ、KV 底层数字都有）。真问题集中在 prefill/decode 边界感（Q6/Q8/Q10 全栽在"KV 是 prefill 算的、decode 只复用"）——焊死这条线是 Phase A 溯源前提。
+
+## Day 1 复查（2026-07-12）
+- **(a) prefill/decode 边界**：✅ "KV prefill 算、decode 复用"焊死了。但 **TTFT 恶化的主因归错**——用户答"大量请求算 KV"（那是 prefill 算力争抢，次要）；主因是**排队**（请求卡 waiting 队列还没轮到 prefill）+ 抢占 requeue/recompute。记牢：**TTFT ≈ 排队 + prefill 时间，恶化先看排队不是先看算力**；TPOT 涨是独立机制=decode batch 变大。Q8 尾巴，不单标 weak。
+- **(b) chunked prefill**：✅ 焊死。"限每 step 计算量、避免长 prefill 拖慢 decode"正确。术语标签：**prefill head-of-line blocking**，官方 roadmap 专治它。
+- 结论：Q6/Q8/Q10 的病根（prefill/decode 边界）基本清除，Phase A 溯源前提达成。
 
 ## "训"侧储备（各准备 2 分钟版本）
 - [ ] KV recompute ↔ activation recomputation 的类比
