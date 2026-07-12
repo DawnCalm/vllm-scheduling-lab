@@ -1,10 +1,15 @@
 # PROGRESS
 
+## ▶ 下次 SESSION 开场清单（Claude 读到这里就按①②③顺序执行，做完一项划掉一项）
+1. **还 Q1**：让用户口述"为什么 pin v0.24.0 而非 v0.25.0、代价是什么"（见 question-bank.md 第1题，上次漏答）。用户答→压缩纠偏，不代答。
+2. **[weak] 抽查**：从 question-bank.md 标 [weak] 的题里抽 2–3 道让用户复述（重点 Q6/Q8/Q10 那条 prefill算KV vs decode复用KV 的边界线）。答好了去掉 [weak]，还虚就留着。
+3. **进 Day 1 harness**：先让用户口述 workload 形状设计（长短混合比例/长度分布/模拟什么场景——这是"实验设计"归用户主导，Claude 不越俎代庖），用户给了设计再动手写脚手架。DoD：一条命令 → CSV+图。
+（注：`git push --force origin main` 若上次没推成，提醒用户补推。）
+
 ## 当前状态
 - Day: 0 完成 → 下次 Day 1 / 阶段: Phase 0（环境 + harness + 项目一仓库公开）
-- 上次收尾: Day 0 技术清单全部完成；GitHub 仓库 https://github.com/DawnCalm/vllm-scheduling-lab 已建
-- 阻塞项: ① 用户需执行 `git push --force origin main`（commit 邮箱重写为 827790610@qq.com 后待推）；② Day 0 防守演练 10 题已出（见 question-bank.md），用户尚未作答——**Day 1 开场先做这个**
-- Day 1 计划: harness 定型（workload 生成器形状由用户先给设计！+ 指标采集 + 绘图，DoD: 一条命令 → CSV+图）；项目一仓库公开
+- 上次收尾: Day 0 技术清单全部完成 + 防守演练已批改（见 question-bank.md）；GitHub 仓库 https://github.com/DawnCalm/vllm-scheduling-lab 已建
+- 阻塞项: `git push --force origin main` 待用户执行（commit 邮箱已重写为 827790610@qq.com）
 - **Pin 版本: vLLM v0.24.0（docker `vllm/vllm-openai:v0.24.0`，2026-06-29 发布，2026-07-11 起手日选定）——全程不升级**
 
 ## 环境事实（2026-07-11 实测）
