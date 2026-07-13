@@ -31,6 +31,8 @@
 - workload 设计（用户主导，已定）：混合服务=简单问答短请求 + 长文档总结/长代码补全；**长 20 条 input 25000/output 512；短 100 条 input 512/output 256；burst 并发**。KV 账：587,040 tokens vs 预算 514,464 = **114% 超线→抢占预期成立**（注：output 从 256→512 曾把总量压到 89%，靠 15→20 长顶回超线）
 - 重要纠偏（源码背书 scheduler.py v0.24.0）：**"被抢占的一定是短请求"错**。FCFS 抢占牺牲者=`running.pop()`=队尾=最晚到达者，长短无关；PRIORITY=最低优先级+最晚到达。短请求"受害"真机制=①新到→恰在队尾被抢②归一化惩罚更狠③排队/HoL。→ SJF 存在理由。源码事实：`num_computed_tokens=0`(recompute非swap)、`waiting.prepend`(塞回队头)、`num_preemptions`每请求自带（trace 直接抓）。KV 预算换算 514,464 = 70.65GiB ÷ 147,456B/token(2·36·8·128·2)
 - 完成：harness 4 部件全写完——`workload.py`(混合生成，token-id精确长度+随机id防prefix cache confound+强制output长度) / `run_load.py`(async客户端,per-req TTFT/TPOT/e2e→CSV) / `metrics_poll.py`(/metrics时间序列) / `plot.py`(timeline+TTFT分层) / `run.sh`(一条命令编排,复用容器)
+- 完成（无 GPU 段）：**V1 架构图**（用户手画→批改→定稿，`docs/notes/v1-architecture.png`）+ **溯源笔记** `docs/notes/v1-architecture.md`（事实锚点 Claude 填、理解用户填，§3抢占路径/§4 KV账全焊死）。**AsyncScheduler 坑讲透**（打欠条/还欠条=异步重叠，继承错基类静默-78%）→ question-bank Q11（Phase B 必答）
+- 学习修正：§4 曾把"70.65G 含权重激活"答反（应为扣掉后剩的），已纠；进程拆分主因=避 GIL 让 GPU 循环与 Python 逻辑隔离（非仅多副本）
 - **未完成/阻塞**：GPU 0/1 被 dzkduser evorubrics 各占 80GB → 起不了 8B 服务 → **harness 一行没在真服务验证**（4 个 API 假设待证：token-id prompt/min_tokens/ignore_eos/streaming）。用户选线下协调 GPU
 - 数据：无（未跑）；代码 harness/*.py + run.sh
 - 结论一句话：harness 脚手架就绪但未验证；今日真正卡点是共享 GPU 被占满，暴露"双卡独占"假设已不成立，需线下协调
