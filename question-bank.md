@@ -40,6 +40,15 @@
 - **(b) chunked prefill**：✅ 焊死。"限每 step 计算量、避免长 prefill 拖慢 decode"正确。术语标签：**prefill head-of-line blocking**，官方 roadmap 专治它。
 - 结论：Q6/Q8/Q10 的病根（prefill/decode 边界）基本清除，Phase A 溯源前提达成。
 
+## Phase B 预习（2026-07-12 Day 1 新学，架构图溯源时补）
+11. [Phase B 必答·今日新学] 为什么自定义 scheduler 必须继承 `AsyncScheduler` 而非 `Scheduler`？
+   → V1 默认**异步调度**：CPU 排第 N+1 步与 GPU 算第 N 步**重叠**，靠占位符实现。`AsyncScheduler` 只覆写两个钩子维护占位符：
+   - `_update_after_schedule`（**打欠条**，async_scheduler.py:39）：decode token 还没从 worker 回来时，先 `num_output_placeholders += ...` 占位 → 排下一步用 `num_computed_tokens + placeholders` 预留 KV 块，不需知道 token 具体值。
+   - `_update_request_with_output`（**还欠条**，:67）：真 token 回来 `num_output_placeholders -= len(new)`，结清。
+   继承基类 `Scheduler` → 无这两覆写 → placeholders 恒 0 → 排不了下一步 → 同步停等 → **实测 -78% 吞吐（docs PR #43724），静默无报错**。
+   → **Phase B 铁律**：①继承 AsyncScheduler 只覆写排序钩子（占位符内脏不碰，spec-decode/PP 分支是噪声）②Day 6 第一件事 = 等价性冒烟（排序不改，验证吞吐==默认版；掉 78% 就是继承错基类）。
+   数据支撑：docs/notes/v1-architecture.md §3；待 Phase B 冒烟实测坐实 -78%。
+
 ## "训"侧储备（各准备 2 分钟版本）
 - [ ] KV recompute ↔ activation recomputation 的类比
 - [ ] RL 后训练 rollout 引擎即 vLLM
