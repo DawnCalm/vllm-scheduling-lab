@@ -68,3 +68,6 @@
 
 15. [机制·已讲清] 为什么首次抢占滞后 KV 饱和 8s（37s 满→45s 才抢）？
    → KV=100% ≠ 立即抢占。抢占只在 running 请求要 append 新 token、申请新 block 而空闲=0 且不可 defer 时触发。block_size=16 → 每 16 token 才申请一次新块，8s = running 集合啃完最后 block 余量到首次分配失败的时间。引擎先从 waiting 灌满 KV，再等 running 长大到挤不出块才踢队尾。→ 待翻 scheduler.py 对着 `allocate_slots` 返回 None → `_preempt` 焊死。
+
+16. [核心·A1 复核焊死] burst 里短请求 TTFT 比长请求差 9.4s，是真机制还是假象？如何证伪？
+   → **主体是发送顺序假象**。受控三点（burst/poisson-r4/poisson-r12）：burst vs r12 都饱和(KV100%,抢占13/14)、唯一差到达顺序 → 打散后 short−long 从 +9.4s 塌到 +0.8s。**但归一化惩罚真实**：r12 短请求 TTFT/e2e=0.34 vs 长 0.22（小 e2e 分母，同样绝对排队延迟归一化抬升更多）。触发=饱和排队(非被抢占，14/100 抢，主体是排队)。→ **绝对延迟公平≠归一化公平，短请求归一化亏损=SJF 要救的**。附带教训：poisson 饱和阈值不能从 burst 排空速率线性外推（r4 rate=4 摊到 33s 就没饱和，KV 仅 86%/0 抢占）。
