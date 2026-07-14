@@ -3,9 +3,10 @@
 ## ▶ 下次 SESSION 开场清单（Claude 读到这里就按①②③顺序执行，做完一项划掉一项）
 1. **确认 GPU**：`nvidia-smi`。GPU 1 常驻师兄 RL rollout（TriLoRA ~21GB 低频）；正式实验固定 GPU 0。容器 `vllm-harness`（v0.24.0/Qwen3-8B）若还在且 healthy 可直接复用（run.sh 自动复用）。
 2. **[weak] 抽查**：question-bank Q12–15（Day 2 A1 归因链）——重点让用户复述"排队为主/抢占加剧 P99 尾部"+"短请求受害=归一化惩罚+发送顺序假象"。答浅就重讲。
-3. **A1 压力矩阵续跑**（首个点已成）。两条推进路线，按用户选：
-   - **(优先) poisson 复核**：`harness/run.sh .../results/poisson-20x100 --n-long 20 --n-short 100 --arrival poisson --rate <R>` 打散长短发送顺序，剥离"长先发"假象，看短请求受害是否仍在（验证归一化惩罚真机制）。
-   - **gpu_memory_utilization 梯度**：移动抢占水位线，出"抢占率–负载曲线"（简历 bullet ① 的核心图）。注意 run.sh 目前不透传 `--gpu-memory-utilization`，需先给 run.sh 加 server flag 透传（小工程）。
+3. **A1 压力矩阵续跑**（首个点 + poisson 复核已成）。下一步：
+   - **(优先) gpu_memory_utilization 梯度**：移动抢占水位线，出"抢占率–负载曲线"（简历 bullet ① 的核心图）。**run.sh 目前不透传 server flag**，需先加 `--gpu-memory-utilization` 透传（小工程，Claude 可代劳）——注意透传后要 `FRESH=1` 重起容器（改 KV 预算必须重启 server）。
+   - 或**并发/上下文梯度**补齐压力矩阵其他维度。
+   - poisson 复核已完成并关掉"长先发"caveat（见下）。
 4. **溯源缺口**：Q15 的"申请块失败→`_preempt`"路径 + per-request 抢占归因方案（/metrics 只给聚合，见 EXPERIMENT.md line 35 三方案）。想深挖抢占时对着 scheduler.py 焊。
 
 ## 当前状态
@@ -38,7 +39,8 @@
 - **纠偏（进 question-bank Q12–15 [weak]）**：用户初答把短请求慢归因"长抢短/被抢占"，纠为"排队为主"；TPOT 理由从"长输出少"纠为"batch step 级属性"。
 - 数据：`experiments/a1-preemption/results/burst-20x100/`；结论 EXPERIMENT.md；反直觉/翻车 4 条已记。
 - 结论一句话：harness 从"未验证"变"验证过+抓到 2 真 bug"；A1 首个点证实 114% 超线下 TTFT 恶化是 **capacity 排队主导**，抢占是尾部效应——SJF 的存在理由在数据上初现。
-- 待办：A1 续跑（poisson 复核 / gpu_mem_util 梯度出抢占率–负载曲线，后者需给 run.sh 加 server flag 透传）。
+- **poisson 复核（同日续）**：受控三点 burst/poisson-r4/poisson-r12。**结论修正**：burst 里 short−long TTFT +9.4s **主体是发送顺序假象**（长先发），打散后（r12 同样饱和 KV100%/抢占14）塌到 **+0.8s**；归一化惩罚真实但次要（r12 short TTFT/e2e 0.34 vs long 0.22，小 e2e 分母放大）。意义：绝对延迟公平≠归一化公平，短请求归一化亏损=**SJF 要救的**（Phase B 动机落点）。附带教训：poisson 饱和阈值不能从 burst 排空速率线性外推（r4 rate=4 摊 33s 就没饱和，KV 仅 86%/0 抢占）。commit d4e7326；question-bank +Q16。
+- 待办：A1 续 gpu_mem_util 梯度出抢占率–负载曲线（需给 run.sh 加 server flag 透传 + FRESH=1 重起）。
 
 ### 2026-07-12 (Day 1)
 - 开场：还 Q1（pin 版本，答半对：抓 soak 期，缺"对本项目致命=实验性接口升级即白测"+"代价"整块）；prefill/decode 边界焊死（(a)"KV prefill 算 decode 复用"对了、TTFT 恶化主因纠为**排队**非算力；(b) chunked prefill=限每 step 计算量、术语 prefill HoL blocking）。question-bank 新增"题目分层制度"（行号不背，记机制+war-story）
