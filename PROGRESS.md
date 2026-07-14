@@ -3,10 +3,9 @@
 ## ▶ 下次 SESSION 开场清单（Claude 读到这里就按①②③顺序执行，做完一项划掉一项）
 1. **确认 GPU**：`nvidia-smi`。GPU 1 常驻师兄 RL rollout（TriLoRA ~21GB 低频）；正式实验固定 GPU 0。容器 `vllm-harness`（v0.24.0/Qwen3-8B）若还在且 healthy 可直接复用（run.sh 自动复用）。
 2. **[weak] 抽查**：question-bank Q12–15（Day 2 A1 归因链）——重点让用户复述"排队为主/抢占加剧 P99 尾部"+"短请求受害=归一化惩罚+发送顺序假象"。答浅就重讲。
-3. **A1 压力矩阵续跑**（首个点 + poisson 复核已成）。下一步：
-   - **(优先) gpu_memory_utilization 梯度**：移动抢占水位线，出"抢占率–负载曲线"（简历 bullet ① 的核心图）。**run.sh 目前不透传 server flag**，需先加 `--gpu-memory-utilization` 透传（小工程，Claude 可代劳）——注意透传后要 `FRESH=1` 重起容器（改 KV 预算必须重启 server）。
-   - 或**并发/上下文梯度**补齐压力矩阵其他维度。
-   - poisson 复核已完成并关掉"长先发"caveat（见下）。
+3. **A1 已收口**（首点 burst + poisson 复核 + 抢占率–负载曲线，bullet① 数字齐、结论焊死）。下一步二选一：
+   - **(优先) Phase A2：CPU KV offloading 对照**（bullet②）——同压力矩阵开 offloading，扫 size，测 PCIe DMA 有效带宽 + TTFT 恢复% + 收益转负边界。flag 以 `vllm serve --help` 实证（native backend）。**run.sh 需加 server flag 透传**（当前只透传 workload 参数，offloading flag 要传到 docker run 的 server 侧）。
+   - 或**补 A1 溯源**：Q15/Q18 的"申请块失败→_preempt"路径 + "长工作集撞预算边界"对着 scheduler.py `allocate_slots`/`_preempt` 焊死（per-request 抢占归因方案见 EXPERIMENT.md line 35）。
 4. **溯源缺口**：Q15 的"申请块失败→`_preempt`"路径 + per-request 抢占归因方案（/metrics 只给聚合，见 EXPERIMENT.md line 35 三方案）。想深挖抢占时对着 scheduler.py 焊。
 
 ## 当前状态
@@ -40,7 +39,8 @@
 - 数据：`experiments/a1-preemption/results/burst-20x100/`；结论 EXPERIMENT.md；反直觉/翻车 4 条已记。
 - 结论一句话：harness 从"未验证"变"验证过+抓到 2 真 bug"；A1 首个点证实 114% 超线下 TTFT 恶化是 **capacity 排队主导**，抢占是尾部效应——SJF 的存在理由在数据上初现。
 - **poisson 复核（同日续）**：受控三点 burst/poisson-r4/poisson-r12。**结论修正**：burst 里 short−long TTFT +9.4s **主体是发送顺序假象**（长先发），打散后（r12 同样饱和 KV100%/抢占14）塌到 **+0.8s**；归一化惩罚真实但次要（r12 short TTFT/e2e 0.34 vs long 0.22，小 e2e 分母放大）。意义：绝对延迟公平≠归一化公平，短请求归一化亏损=**SJF 要救的**（Phase B 动机落点）。附带教训：poisson 饱和阈值不能从 burst 排空速率线性外推（r4 rate=4 摊 33s 就没饱和，KV 仅 86%/0 抢占）。commit d4e7326；question-bank +Q16。
-- 待办：A1 续 gpu_mem_util 梯度出抢占率–负载曲线（需给 run.sh 加 server flag 透传 + FRESH=1 重起）。
+- **抢占率–负载曲线（同日续）**：固定 util 0.9、扫工作负载规模 57→148%、每点 3 重复（results/load-sweep/，聚合脚本 plot_sweep.py）。**核心结论**：①**P99 TTFT 单调随负载升、拐点 ~100% 预算线 = 真负载信号**；②**抢占非单调**（中位 0/0/1/12/0/1，峰在 114% 中等超载、重超载掉回 ~0），"preemption-vs-load"命名误导。机制（数据背书）：抢占峰在**长工作集≈预算**处（20 长=510k=99%），非总负载——114% waiting@sat≈0（全挤 running 贴天花板→抢占爆发）、148% waiting@sat≈111（长集 129% 装不下→摁进 waiting→churning running 小→少抢）。**顺序对照证伪**"长先发导致过度 admit"：打散顺序(interleaved rate=1000)仍抢中位 5≠0，抢占由稳态 packing 驱动、与顺序无关；顺序只动 TTFT 瞬态。方法学：burst 抢占计数高方差(114% 三次 4/12/22)，seed 不固定 asyncio 发射时序→需重复+误差带。commit 145f2f8；question-bank +Q17–20。
+- 待办：**A1 已足够扎实（首点+poisson 复核+负载曲线，bullet① 数字齐）**。下一步 Phase A2 CPU KV offloading 对照（bullet②），或补 A1 溯源（Q15/Q18 的"申请块失败→_preempt" + 长工作集撞预算 对着 scheduler.py 焊）。
 
 ### 2026-07-12 (Day 1)
 - 开场：还 Q1（pin 版本，答半对：抓 soak 期，缺"对本项目致命=实验性接口升级即白测"+"代价"整块）；prefill/decode 边界焊死（(a)"KV prefill 算 decode 复用"对了、TTFT 恶化主因纠为**排队**非算力；(b) chunked prefill=限每 step 计算量、术语 prefill HoL blocking）。question-bank 新增"题目分层制度"（行号不背，记机制+war-story）
