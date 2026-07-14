@@ -1,0 +1,6 @@
+{
+  "wall_start": 1784015612.8266013,
+  "wall_end": 1784015692.0850253,
+  "base_url": "http://localhost:8000",
+  "model": "Qwen/Qwen3-8B"
+}

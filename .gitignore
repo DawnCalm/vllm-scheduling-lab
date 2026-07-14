@@ -15,3 +15,4 @@ experiments/**/results/large/
 # scratch
 *.log
 .tmp/
+experiments/a1-preemption/results/load-sweep/*/plots/
