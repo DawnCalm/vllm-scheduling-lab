@@ -34,8 +34,25 @@
 - 原始数据：`results/<point>/requests.csv` + `metrics.csv` ；图 `results/<point>/plots/`
 - ⚠️ per-request 抢占归因：`/metrics` 只给聚合计数；具体哪条被抢占待 Phase A 定方案（OTLP tracing / 解析 request 日志 / `num_preemptions` 字段暴露）
 
-## 结论（用户口述版 · 跑完填）
-【待填】
+## 实测数字（首个点 burst-20x100 · 2026-07-14 · v0.24.0 / Qwen3-8B / SM120 / GPU0 / FLASH_ATTN）
+原始数据：`results/burst-20x100/{requests,metrics}.csv`；图：`results/burst-20x100/plots/`
+
+| 指标 | short (n=100) | long (n=20) |
+|---|---|---|
+| TTFT 中位 | **27.9s** | 18.6s |
+| TTFT P99 | **67.7s** | 50.4s |
+| TPOT 中位 | 91.7ms | 98.7ms |
+| e2e 中位 | 51.3s | 69.0s |
+
+引擎侧：KV 峰值 **100%**（>90% 占 144/321 采样点）；waiting 峰值 **119，capacity 占 100%**（deferred 恒 0）；
+首次抢占 **@45.4s**（KV 饱和 ~37s 之后 8s）；累计抢占 **13 次**（集中 45–70s）；running 峰值 75；120/120 全成功；wall 76.6s。
+对照基线：TPOT ~90ms ≈ Day 0 空载基线 ~12ms 的 **7×**（大 batch + 高压 + recompute 税）。
+
+## 结论（用户口述版 · 2026-07-14）
+114% 超线 burst 下，**短请求 TTFT 恶化的主因是 KV 容量排队**（capacity-waiting 峰值 119、占 waiting 100%），**抢占只是次要原因，仅加剧 P99**（全程 13 次，vs 100 条短请求，无法解释整片短请求都慢；短 TTFT 分位呈 ~28s/~67s 台阶 = 分批 admission 而非少数被抢）。**短请求受害更重**有两个原因：①归一化惩罚不对称（固定等待砸在小请求上占比灾难性）；②本次 workload 发送顺序先长后短，burst+FCFS 下长请求先被 admit。TPOT 两类接近（~90ms）证明 decode 是同步 batch step、per-token 墙上时间与请求类别无关。
 
 ## 反直觉点 / 翻车记录
-【待填 —— 项目一"负优化证伪"文化延续，抢占救回为负、拐点反常等都记这里】
+- **假象自曝（诚实记录）**：短请求 TTFT(27.9s) 比长请求(18.6s) 更差，**部分是 workload 顺序假象**——20 长请求 send_t 0.055–0.080s、100 短请求 0.081–0.097s，长请求整体先发（workload.py 先 `add("long")`），burst+FCFS 下先发先 admit。`corr(send_t,ttft)` 长 0.70/短 0.53 佐证"后发→TTFT 高"。**下一个点用 poisson 到达（打散长短顺序）复核**，剥离顺序效应。
+- **"排队 ≠ 抢占"易混**：waiting 里的 119 条从未进 running，谈不上被抢；抢占专指踢 running 队尾。短请求慢的主体是"从没被 admit"，不是"被抢"。
+- **抢占滞后 KV 饱和 8s**：KV=100% ≠ 立即抢占；抢占只在 running 请求需 append 新 token、申请新 block 失败(空闲=0)时触发。block_size=16 → 每 16 token 才申请一次，8s = running 集合啃完最后 block 余量到首次分配失败的时间。
+- **假设 2 修正**："被抢占长短无关"成立（FCFS=running 队尾）；但原假设把短请求受害主因押在"被抢占"，实测是**排队为主、抢占加剧尾部**——归因重心从抢占移到 capacity 排队。

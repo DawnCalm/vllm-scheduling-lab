@@ -53,3 +53,18 @@
 - [ ] KV recompute ↔ activation recomputation 的类比
 - [ ] RL 后训练 rollout 引擎即 vLLM
 - [ ] FP8 推理链路 ↔ FP8 训练的数值语义
+
+## Day 2 · A1 首个点防守演练（2026-07-14 · burst-20x100）
+数据支撑：`experiments/a1-preemption/results/burst-20x100/`（requests.csv + metrics.csv + plots）
+
+12. [weak·归因陷阱] 高压下短请求 TTFT 恶化，主因是"被抢占"还是"排队"？
+   → **排队为主，抢占次要（只加剧 P99）**。数据：全程仅 13 次抢占 vs 100 条短请求，覆盖不了整片；短 TTFT 分位呈 ~28s/~67s **台阶**=分批 admission，非少数被抢；waiting 峰值 119 且 capacity 占 100%。**"排队≠抢占"**：waiting 里的请求从没进 running，谈不上被抢；抢占专指踢 running 队尾。→ 记牢：TTFT ≈ 排队 + 自身 prefill，先看能不能被 admit。
+
+13. [weak·假象自曝] 短请求 TTFT(27.9s) 比长请求(18.6s) 差，是真机制还是 workload 假象？
+   → **部分是发送顺序假象**。workload.py 先 add long 后 add short → 长请求 send_t 0.055–0.080s 全早于短请求 0.081–0.097s → burst+FCFS 先发先 admit。corr(send_t,ttft) 长0.70/短0.53。真机制部分=归一化惩罚不对称（固定等待砸小请求上占比灾难）。→ 下个点用 poisson 到达打散顺序复核。面试主动亮此 caveat。
+
+14. [weak·概念区分] TPOT 两类接近(~90ms) 说明什么？
+   → decode 是**同步 batch step**，running batch 每请求每次 forward 各进 1 token，共享同一 per-token 墙上时间 → TPOT 是 batch/step 级属性，**与请求类别无关**，跟输出长度无关。补：~90ms ≈ Day0 空载 ~12ms 的 7×（大 batch+高压+recompute 税，独立发现）。
+
+15. [机制·已讲清] 为什么首次抢占滞后 KV 饱和 8s（37s 满→45s 才抢）？
+   → KV=100% ≠ 立即抢占。抢占只在 running 请求要 append 新 token、申请新 block 而空闲=0 且不可 defer 时触发。block_size=16 → 每 16 token 才申请一次新块，8s = running 集合啃完最后 block 余量到首次分配失败的时间。引擎先从 waiting 灌满 KV，再等 running 长大到挤不出块才踢队尾。→ 待翻 scheduler.py 对着 `allocate_slots` 返回 None → `_preempt` 焊死。

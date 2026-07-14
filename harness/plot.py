@@ -66,7 +66,9 @@ def plot_timeline(metrics: list[dict], out: str, title: str) -> None:
         ax1.text(t_first, ax1.get_ylim()[1] * 0.95,
                  f" first preempt @ {t_first:.1f}s", color="gray", va="top")
 
-    lines = ax1.get_lines() + ax2.get_lines()
+    # only real data series, not helper artists (axvline etc.)
+    lines = [l for l in ax1.get_lines() + ax2.get_lines()
+             if not l.get_label().startswith("_")]
     ax1.legend(lines, [l.get_label() for l in lines], loc="upper left", fontsize=9)
     ax1.set_title(title)
     fig.tight_layout()
