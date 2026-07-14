@@ -1,18 +1,20 @@
 # PROGRESS
 
 ## ▶ 下次 SESSION 开场清单（Claude 读到这里就按①②③顺序执行，做完一项划掉一项）
-1. **确认 GPU 是否已释放**：`nvidia-smi` 看 GPU 0 是否还被 dzkduser 的 evorubrics 占（Day 1 时两卡各 ~80GB，只剩 ~17GB，跑不了 8B）。没释放→回到"等/协调"或先做无 GPU 的活（架构图、项目一公开）。
-2. **GPU 一到手，先冒烟验证 harness**（Day 1 写完但**一行没在真服务上跑过**）：`harness/run.sh /tmp/demo --n-long 2 --n-short 3 --long-input 4000` 用小 workload 验证 4 个 API 假设：①token-id 列表当 prompt ②`min_tokens`/`ignore_eos` ③streaming 抓 TTFT ④/metrics 字段名对得上。任一不成立就地修。
-3. **冒烟过了再上 A1 首个点**：`harness/run.sh experiments/a1-preemption/results/burst-20x100 --n-long 20 --n-short 100`（20长/100短=114%超线，预期触发抢占）。DoD：一条命令→CSV+图，timeline.png 里 preemptions 曲线抬头。
-4. **[weak] 抽查**（若有空）：question-bank 剩余 [weak]；Q8 尾巴"TTFT 恶化归因到排队"复述一遍。
-（注：`git push` 仍有 3 个 commit 未推——fetch 后 origin/main 停在 c701a2，本地领先 e52ce40/c470aab/ec5d606；用户以为推了其实没推。可能需 `--force`（重写过邮箱）。）
+1. **确认 GPU**：`nvidia-smi`。GPU 1 常驻师兄 RL rollout（TriLoRA ~21GB 低频）；正式实验固定 GPU 0。容器 `vllm-harness`（v0.24.0/Qwen3-8B）若还在且 healthy 可直接复用（run.sh 自动复用）。
+2. **[weak] 抽查**：question-bank Q12–15（Day 2 A1 归因链）——重点让用户复述"排队为主/抢占加剧 P99 尾部"+"短请求受害=归一化惩罚+发送顺序假象"。答浅就重讲。
+3. **A1 压力矩阵续跑**（首个点已成）。两条推进路线，按用户选：
+   - **(优先) poisson 复核**：`harness/run.sh .../results/poisson-20x100 --n-long 20 --n-short 100 --arrival poisson --rate <R>` 打散长短发送顺序，剥离"长先发"假象，看短请求受害是否仍在（验证归一化惩罚真机制）。
+   - **gpu_memory_utilization 梯度**：移动抢占水位线，出"抢占率–负载曲线"（简历 bullet ① 的核心图）。注意 run.sh 目前不透传 `--gpu-memory-utilization`，需先给 run.sh 加 server flag 透传（小工程）。
+4. **溯源缺口**：Q15 的"申请块失败→`_preempt`"路径 + per-request 抢占归因方案（/metrics 只给聚合，见 EXPERIMENT.md line 35 三方案）。想深挖抢占时对着 scheduler.py 焊。
 
 ## 当前状态
-- Day: 1 进行中（harness 代码完成但**未验证**）/ 阶段: Phase 0
-- 上次收尾: Day 1 写完 harness 全部 4 部件 + run.sh 编排；但 GPU 被占无法起服务验证；Q1 补答+prefill/decode 边界焊死（见 question-bank Day 1 复查）
-- **阻塞项（硬）**: GPU 0/1 各被 dzkduser 的 `evorubrics` 任务占 ~80GB（PID 3230151/3230152），各只剩 ~17GB → 8B(权重16GB)+KV 塞不下。用户选择线下协调 GPU（问 evorubrics 跑多久/能否独占一卡/夜间错峰）。**harness 代码全部未在真服务验证**。
-- 阻塞项（旧）: `git push` 3 个 commit 未推（见上）
-- **Pin 版本: vLLM v0.24.0（docker `vllm/vllm-openai:v0.24.0`，2026-06-29 发布，2026-07-11 起手日选定）——全程不升级**
+- Day: 2 完成 / 阶段: **Phase A 进行中**（A1 首个点已成）
+- 上次收尾: harness 在真服务验证通过（4 API 假设全过）+ 修 2 真 bug（死字段 gpu_cache_usage_perc、poller 信号泄漏挂死）；A1 首个点 burst-20x100 跑通并出结论；question-bank +Q12–15
+- **阻塞项: 无**（GPU 已释放，两卡空闲）
+- Git: 已同步（HEAD==origin/main 后再叠 Day2 三个 commit）；PROGRESS 旧注"3 commit 未推"已证实为**过时误记**（当时其实已 push）
+- **Pin 版本: vLLM v0.24.0（docker `vllm/vllm-openai:v0.24.0`）——全程不升级**
+- 运行中容器: `vllm-harness`（GPU0, Qwen3-8B, port 8000）——下次可复用或 `docker rm -f` 重起
 
 ## 环境事实（2026-07-11 实测）
 - GPU: 2× RTX PRO 6000 Blackwell **Server Edition**, 96GB ×2, SM120, driver 580.119.02, PCIe 无 NVLink
@@ -25,6 +27,18 @@
 - 项目一仓库: `~/AI-infra/nano-vllm`（当前 remote 指向上游 GeeeekExplorer/nano-vllm，用户自己的 fork/新仓库待建）
 
 ## 日志（倒序）
+
+### 2026-07-14 (Day 2) — GPU 到手，harness 验证 + A1 首个点
+- **GPU 释放**：dzkduser evorubrics 撤离，两卡各 0 MiB。固定 GPU 0 跑。
+- **harness 真服务验证**（Day 1 写完从没跑过）：起 v0.24.0/Qwen3-8B（~116s ready），手搓 curl 验 4 API 假设——①token-id 列表当 prompt ✅ ②min_tokens+ignore_eos 强制输出恰好 N（usage.completion_tokens 坐实）✅ ③streaming 抓 TTFT+include_usage ✅ ④/metrics 字段：3/5 在，**`gpu_cache_usage_perc` 不存在**（V0 旧名，V1 移除；kv_cache_usage_perc 是唯一真相）。
+- **修 2 个真 bug（冒烟抓到）**：(1) 删死字段 gpu_cache_usage_perc（原会写空列）；(2) poller 经 `conda run` 起 → wrapper 不转发 SIGTERM → kill+wait 挂死 2min+孤儿进程 → 改 env python 直连（$! 是真 python，SIGTERM handler 干净 flush）。commit ccb09e4。
+- **harness 增强**：抓 `num_requests_waiting_by_reason` 分列 capacity/deferred（capacity 排队 = KV 压力→抢占的因果信号）；timeline 加 capacity 线。
+- **A1 首个点 burst-20x100**：120/120 ok，wall 76.6s。KV 峰 100%、waiting 峰 119@capacity 100%、首抢 @45.4s、13 次抢占。short TTFT 中位 27.9s/P99 67.7s、long 18.6/50.4；TPOT 两类 ~90ms。
+- **结论（用户口述）**：短请求 TTFT 恶化**主因排队非抢占**，抢占 13× 仅加剧 P99 尾部；短请求受害更重=归一化惩罚 + **workload 先长后短的发送顺序假象**（corr(send_t,ttft) 长0.70/短0.53，诚实记为 caveat，下点用 poisson 复核）。TPOT 两类接近=decode 同步 batch step。commit 7ef8ec5。
+- **纠偏（进 question-bank Q12–15 [weak]）**：用户初答把短请求慢归因"长抢短/被抢占"，纠为"排队为主"；TPOT 理由从"长输出少"纠为"batch step 级属性"。
+- 数据：`experiments/a1-preemption/results/burst-20x100/`；结论 EXPERIMENT.md；反直觉/翻车 4 条已记。
+- 结论一句话：harness 从"未验证"变"验证过+抓到 2 真 bug"；A1 首个点证实 114% 超线下 TTFT 恶化是 **capacity 排队主导**，抢占是尾部效应——SJF 的存在理由在数据上初现。
+- 待办：A1 续跑（poisson 复核 / gpu_mem_util 梯度出抢占率–负载曲线，后者需给 run.sh 加 server flag 透传）。
 
 ### 2026-07-12 (Day 1)
 - 开场：还 Q1（pin 版本，答半对：抓 soak 期，缺"对本项目致命=实验性接口升级即白测"+"代价"整块）；prefill/decode 边界焊死（(a)"KV prefill 算 decode 复用"对了、TTFT 恶化主因纠为**排队**非算力；(b) chunked prefill=限每 step 计算量、术语 prefill HoL blocking）。question-bank 新增"题目分层制度"（行号不背，记机制+war-story）
