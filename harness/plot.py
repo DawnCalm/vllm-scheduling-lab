@@ -37,6 +37,7 @@ def plot_timeline(metrics: list[dict], out: str, title: str) -> None:
     kv = to_float(metrics, "kv_usage") * 100.0
     running = to_float(metrics, "running")
     waiting = to_float(metrics, "waiting")
+    waiting_cap = to_float(metrics, "waiting_capacity")
     preempt = to_float(metrics, "preemptions_total")
     preempt = preempt - np.nanmin(preempt)  # cumulative since run start
 
@@ -46,6 +47,9 @@ def plot_timeline(metrics: list[dict], out: str, title: str) -> None:
     ax1.set_ylabel("KV usage %  /  queue length")
     ax1.plot(t, running, color="tab:blue", lw=1, alpha=0.7, label="running")
     ax1.plot(t, waiting, color="tab:orange", lw=1, alpha=0.7, label="waiting")
+    if not np.all(np.isnan(waiting_cap)):
+        ax1.plot(t, waiting_cap, color="tab:brown", lw=1.5, alpha=0.8,
+                 label="waiting (capacity)")
     ax1.set_ylim(bottom=0)
 
     ax2 = ax1.twinx()

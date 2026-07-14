@@ -22,6 +22,11 @@ NAME="vllm-harness"
 BASE_URL="http://localhost:${PORT}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY() { conda run --no-capture-output -n "$CONDA_ENV" python "$@"; }
+# Direct interpreter path for the BACKGROUND poller: `conda run` forks a wrapper
+# that does NOT forward SIGTERM to the child python, so kill+wait would hang and
+# orphan the poller. Launching python directly makes $! the real process, so its
+# SIGTERM handler fires and flushes cleanly. (foreground PY() calls are unaffected.)
+PYBIN="$(conda run -n "$CONDA_ENV" python -c 'import sys; print(sys.executable)')"
 
 mkdir -p "$OUTDIR"
 
@@ -49,7 +54,7 @@ fi
 curl -sf "$BASE_URL/health" >/dev/null || { echo "[run] server not healthy"; exit 1; }
 
 # --- 2. metrics poller in background ------------------------------------------
-PY "$HERE/metrics_poll.py" --base-url "$BASE_URL" --interval "$POLL_INTERVAL" \
+"$PYBIN" "$HERE/metrics_poll.py" --base-url "$BASE_URL" --interval "$POLL_INTERVAL" \
    --out "$OUTDIR/metrics.csv" &
 POLL_PID=$!
 trap 'kill -TERM $POLL_PID 2>/dev/null' EXIT
